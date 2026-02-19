@@ -102,12 +102,20 @@ if df is not None:
     # --- TABEL HASIL ---
     st.divider()
     st.subheader(f"📋 Estimasi Angka Tahun {target_year}")
-    cols = st.columns(len(forecasts))
-    for i, (name, vals) in enumerate(forecasts.items()):
-        cols[i].metric(name, f"{vals[-1]:,.0f} k-tons")
-
-    with st.expander("Lihat Data Historis"):
-        st.dataframe(df, use_container_width=True)
-
-else:
-    st.error("Gagal memuat data. Periksa kembali apakah file CSV sudah benar di GitHub.")
+    
+    if forecasts:
+        cols = st.columns(len(forecasts))
+        for i, (name, vals) in enumerate(forecasts.items()):
+            # Menggunakan .iloc[-1] agar selalu mengambil baris terakhir 
+            # baik itu list, numpy array, maupun pandas series
+            try:
+                if hasattr(vals, "iloc"):
+                    last_val = vals.iloc[-1]
+                else:
+                    last_val = vals[-1]
+                
+                cols[i].metric(name, f"{last_val:,.0f} k-tons")
+            except Exception as e:
+                cols[i].error("Error format")
+    else:
+        st.warning("Silakan pilih algoritma di sidebar untuk melihat hasil estimasi.")
