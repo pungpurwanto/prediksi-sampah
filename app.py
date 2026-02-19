@@ -2,96 +2,112 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from prophet import Prophet
-from sklearn.linear_model import LinearRegression
 import os
 
-st.set_page_config(page_title="Prediksi Sampah EPA", layout="wide")
-st.title("🗑️ Dashboard Prediksi Timbulan Sampah (EPA)")
+# Import Algoritma (Tanpa Tensorflow/LSTM)
+from prophet import Prophet
+import pmdarima as pm
+from xgboost import XGBRegressor
 
+# Konfigurasi Halaman
+st.set_page_config(page_title="Forecasting Sampah EPA", layout="wide", page_icon="🗑️")
+
+st.title("🗑️ Dashboard Prediksi Timbulan Sampah")
+st.markdown("Analisis perbandingan model **Prophet, Auto-ARIMA, dan XGBoost** untuk proyeksi sampah hingga 2030+.")
+
+# --- FUNGSI LOAD DATA ---
 @st.cache_data
 def load_data():
-    # 1. Cari file CSV
     files = [f for f in os.listdir('.') if f.endswith('.csv')]
     if not files:
         return None
     
     target_file = files[0]
-    
-    # 2. Coba baca file dengan melompati baris header laporan EPA yang biasanya ada di atas
-    # Kita coba skiprows 2, 3, dan 4
+    # Mencoba berbagai cara membaca file EPA
     for skip in [2, 3, 4, 5]:
         try:
-            # Gunakan encoding ISO dan engine python untuk fleksibilitas
             df = pd.read_csv(target_file, skiprows=skip, encoding='ISO-8859-1', sep=None, engine='python')
-            
-            # Ambil kolom ke-1 (Tahun) dan kolom ke-9 (Total Generation)
-            # iloc[:, 0] adalah kolom 'Year'
-            # iloc[:, 8] adalah kolom 'Total Generation'
+            # Ambil Kolom Tahun (index 0) dan Total Generation (index 8)
             data = df.iloc[:, [0, 8]].copy()
             data.columns = ['Year', 'Total_Generation']
-            
-            # Konversi ke angka
             data['Year'] = pd.to_numeric(data['Year'], errors='coerce')
             data['Total_Generation'] = pd.to_numeric(data['Total_Generation'], errors='coerce')
-            
-            # Hapus baris yang kosong (NaN)
             data = data.dropna()
-            
-            # Validasi: Apakah ada data tahun antara 1960-2020?
-            valid_data = data[(data['Year'] >= 1960) & (data['Year'] <= 2020)]
-            
-            if not valid_data.empty:
-                return valid_data.sort_values('Year')
+            data = data[(data['Year'] >= 1960) & (data['Year'] <= 2018)]
+            if not data.empty:
+                return data.sort_values('Year').reset_index(drop=True)
         except:
             continue
     return None
 
 df = load_data()
 
-if df is not None and not df.empty:
-    st.sidebar.success("✅ Data Berhasil Dimuat!")
+if df is not None:
+    # --- SIDEBAR PENGATURAN ---
+    st.sidebar.header("⚙️ Konfigurasi Model")
+    selected_algos = st.sidebar.multiselect(
+        "Pilih Algoritma:",
+        ['Prophet', 'Auto-ARIMA', 'XGBoost'],
+        default=['Prophet', 'Auto-ARIMA', 'XGBoost']
+    )
     
-    # Ambil info tahun
     last_year = int(df['Year'].max())
-    target_year = st.sidebar.slider("Prediksi hingga Tahun:", last_year + 1, 2040, 2030)
+    target_year = st.sidebar.slider("Prediksi Sampai Tahun:", last_year + 1, 2040, 2030)
+    n_years = target_year - last_year
+    years_future = np.arange(last_year + 1, target_year + 1)
+
+    # --- PROSES MODELING ---
+    forecasts = {}
     
-    # --- MODELING ---
-    # Prophet (Paling stabil untuk data tahunan EPA)
-    df_p = df.rename(columns={'Year':'ds', 'Total_Generation':'y'})
-    df_p['ds'] = pd.to_datetime(df_p['ds'], format='%Y')
-    
-    m = Prophet(yearly_seasonality=False, weekly_seasonality=False, daily_seasonality=False)
-    m.fit(df_p)
-    
-    future = m.make_future_dataframe(periods=target_year - last_year, freq='Y')
-    forecast = m.predict(future)
-    
+    # 1. Prophet
+    if 'Prophet' in selected_algos:
+        with st.spinner('Menghitung Prophet...'):
+            m_p = Prophet(yearly_seasonality=True).fit(df.rename(columns={'Year':'ds', 'Total_Generation':'y'}))
+            fut_p = m_p.make_future_dataframe(periods=n_years, freq='Y')
+            res_p = m_p.predict(fut_p)
+            forecasts['Prophet'] = res_p.iloc[-n_years:]['yhat'].values
+
+    # 2. Auto-ARIMA
+    if 'Auto-ARIMA' in selected_algos:
+        with st.spinner('Menghitung Auto-ARIMA...'):
+            m_a = pm.auto_arima(df['Total_Generation'], seasonal=False, suppress_warnings=True)
+            forecasts['Auto-ARIMA'] = m_a.predict(n_periods=n_years)
+
+    # 3. XGBoost
+    if 'XGBoost' in selected_algos:
+        with st.spinner('Menghitung XGBoost...'):
+            m_x = XGBRegressor(n_estimators=100, learning_rate=0.1).fit(df[['Year']], df['Total_Generation'])
+            forecasts['XGBoost'] = m_x.predict(pd.DataFrame({'Year': years_future}))
+
     # --- VISUALISASI ---
-    fig, ax = plt.subplots(figsize=(10, 5))
-    ax.scatter(df['Year'], df['Total_Generation'], color='black', label='Data Historis')
-    ax.plot(forecast['ds'].dt.year, forecast['yhat'], color='green', label='Prediksi Prophet', linewidth=2)
+    st.subheader("📈 Grafik Perbandingan Prediksi")
+    fig, ax = plt.subplots(figsize=(12, 6))
     
-    ax.set_title(f"Proyeksi Timbulan Sampah hingga {target_year}")
+    # Plot Data Historis
+    ax.scatter(df['Year'], df['Total_Generation'], color='black', label='Data Historis (EPA)', s=40, alpha=0.6)
+    
+    # Plot Garis Prediksi
+    colors = {'Prophet': '#2ca02c', 'Auto-ARIMA': '#1f77b4', 'XGBoost': '#ff7f0e'}
+    for name, vals in forecasts.items():
+        ax.plot(years_future, vals, label=f"Prediksi {name}", linewidth=3, marker='o', markersize=4, color=colors.get(name))
+    
+    ax.axvline(x=last_year, color='red', linestyle='--', alpha=0.5, label='Batas Data Historis')
+    ax.set_title("Proyeksi Tren Sampah Masa Depan", fontsize=14)
     ax.set_xlabel("Tahun")
     ax.set_ylabel("Total Sampah (Ribu Ton)")
     ax.legend()
+    ax.grid(True, linestyle=':', alpha=0.6)
     st.pyplot(fig)
-    
-    # --- TABEL PREDIKSI ---
-    st.subheader(f"📊 Tabel Hasil Prediksi (Target {target_year})")
-    pred_val = forecast[['ds', 'yhat']].tail(1)
-    st.write(f"Estimasi timbulan sampah pada tahun {target_year} adalah **{pred_val['yhat'].values[0]:,.0f} ribu ton**.")
-    
-    with st.expander("Lihat Data Mentah Terdeteksi"):
-        st.dataframe(df)
+
+    # --- TABEL HASIL ---
+    st.divider()
+    st.subheader(f"📋 Estimasi Angka Tahun {target_year}")
+    cols = st.columns(len(forecasts))
+    for i, (name, vals) in enumerate(forecasts.items()):
+        cols[i].metric(name, f"{vals[-1]:,.0f} k-tons")
+
+    with st.expander("Lihat Data Historis"):
+        st.dataframe(df, use_container_width=True)
 
 else:
-    st.error("❌ Data masih tidak terbaca.")
-    st.markdown("""
-    **Cara Perbaikan Manual:**
-    1. Buka file CSV Anda di Notepad/Excel.
-    2. Pastikan angka tahun (1960, 1961...) ada di kolom paling kiri (**Kolom A**).
-    3. Pastikan angka total sampah ada di **Kolom I** (kolom ke-9).
-    4. Hapus baris teks judul di bagian paling atas file sehingga baris 1 atau 2 langsung berisi angka data.
-    """)
+    st.error("Gagal memuat data. Periksa kembali apakah file CSV sudah benar di GitHub.")
