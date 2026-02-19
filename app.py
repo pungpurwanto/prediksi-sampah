@@ -25,48 +25,76 @@ def load_data():
     target_file = files[0]
     
     try:
-        # 1. Gunakan sep=None dan engine='python' agar Pandas menebak sendiri pemisahnya (koma/titik koma)
-        df = pd.read_csv(target_file, skiprows=3, encoding='ISO-8859-1', sep=None, engine='python', on_bad_lines='skip')
+        # Kita paksa menggunakan koma dan lewati baris header yang berantakan
+        # Jika file Anda pakai titik koma, ganti sep=',' menjadi sep=';'
+        df = pd.read_csv(
+            target_file, 
+            sep=',', 
+            skiprows=2, 
+            encoding='ISO-8859-1', 
+            on_bad_lines='skip',
+            engine='c'
+        )
         
-        # 2. Bersihkan nama kolom dari spasi atau karakter aneh
+        # Bersihkan spasi di nama kolom
         df.columns = [str(c).strip() for c in df.columns]
-        
-        # 3. Validasi jumlah kolom untuk mencegah error 'out-of-bounds'
-        if df.shape[1] < 2:
-            st.error(f"❌ File terdeteksi hanya memiliki {df.shape[1]} kolom. Pastikan pemisah CSV benar.")
-            return None
 
-        # 4. Cari kolom Tahun (biasanya kolom pertama)
-        # Cari kolom Total Generation (Kita cari kolom yang mengandung kata 'Total' dan 'Generation')
-        col_tahun = df.columns[0]
-        col_target = None
+        # Strategi pencarian kolom:
+        # Cari kolom yang berisi tahun (biasanya kolom 0 atau bernama 'Year')
+        # Cari kolom yang berisi angka sampah (biasanya kolom 8 atau mengandung 'Total')
         
-        # Mencari kolom yang kemungkinan besar adalah 'Total Generation'
-        potential_cols = [c for c in df.columns if 'Total' in c and 'Generation' in c]
-        if potential_cols:
-            col_target = potential_cols[0]
-        elif df.shape[1] >= 9: # Jika tidak ketemu namanya, ambil index ke-8 (kolom ke-9)
-            col_target = df.columns[8]
-        else:
-            col_target = df.columns[-1] # Ambil kolom terakhir sebagai cadangan
+        # Cari kolom Tahun
+        col_year = df.columns[0]
+        for c in df.columns:
+            if 'Year' in c:
+                col_year = c
+                break
+        
+        # Cari kolom Total Generation
+        col_gen = None
+        for c in df.columns:
+            if 'Total' in c and 'Generation' in c:
+                col_gen = c
+                break
+        
+        if col_gen is None:
+            # Jika tidak ketemu namanya, ambil kolom ke-9 (index 8) atau terakhir
+            col_gen = df.columns[8] if len(df.columns) > 8 else df.columns[-1]
 
-        df_clean = df[[col_tahun, col_target]].copy()
+        # Ambil datanya
+        df_clean = df[[col_year, col_gen]].copy()
         df_clean.columns = ['Year', 'Total_Generation']
         
-        # 5. Konversi ke numerik
+        # Konversi ke angka
         df_clean['Year'] = pd.to_numeric(df_clean['Year'], errors='coerce')
         df_clean['Total_Generation'] = pd.to_numeric(df_clean['Total_Generation'], errors='coerce')
         
-        # 6. Hapus baris yang tidak valid
+        # Bersihkan baris yang bukan angka
         df_clean = df_clean.dropna()
-        df_clean = df_clean[df_clean['Year'] > 1900].sort_values('Year')
+        df_clean = df_clean[df_clean['Year'] > 1950].sort_values('Year')
         df_clean['Year'] = df_clean['Year'].astype(int)
         
         return df_clean
-    except Exception as e:
-        st.error(f"❌ Error Detail: {e}")
-        return None
 
+    except Exception as e:
+        # Jika gagal pakai koma, coba pakai titik koma (Format Excel Indonesia/Eropa)
+        try:
+            df = pd.read_csv(target_file, sep=';', skiprows=2, encoding='ISO-8859-1', on_bad_lines='skip')
+            # ... (ulangi logika pembersihan yang sama seperti di atas) ...
+            st.info("💡 Berhasil membaca dengan pemisah titik koma (;)")
+            return load_data_fallback(target_file, ';')
+        except:
+            st.error(f"❌ Gagal total membaca file. Error: {e}")
+            return None
+
+# Fungsi bantuan jika cara pertama gagal
+def load_data_fallback(file, separator):
+    df = pd.read_csv(file, sep=separator, skiprows=2, encoding='ISO-8859-1', on_bad_lines='skip')
+    df_clean = df.iloc[:, [0, 8]].copy()
+    df_clean.columns = ['Year', 'Total_Generation']
+    df_clean['Year'] = pd.to_numeric(df_clean['Year'], errors='coerce')
+    df_clean['Total_Generation'] = pd.to_numeric(df_clean['Total_Generation'], errors='coerce')
+    return df_clean.dropna().sort_values('Year')
 df = load_data()
 
 if df is not None:
