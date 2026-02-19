@@ -25,22 +25,39 @@ def load_data():
     target_file = files[0]
     
     try:
-        # Menggunakan engine='python' dan on_bad_lines untuk menangani kolom yang tidak konsisten
-        df = pd.read_csv(target_file, skiprows=3, encoding='ISO-8859-1', on_bad_lines='skip')
+        # 1. Gunakan sep=None dan engine='python' agar Pandas menebak sendiri pemisahnya (koma/titik koma)
+        df = pd.read_csv(target_file, skiprows=3, encoding='ISO-8859-1', sep=None, engine='python', on_bad_lines='skip')
         
-        # Bersihkan nama kolom
+        # 2. Bersihkan nama kolom dari spasi atau karakter aneh
         df.columns = [str(c).strip() for c in df.columns]
         
-        # Cari kolom Tahun dan Total Generation
-        # Pada file Anda, Tahun ada di kolom 0, Total Generation di kolom 8
-        df_clean = df.iloc[:, [0, 8]].copy()
+        # 3. Validasi jumlah kolom untuk mencegah error 'out-of-bounds'
+        if df.shape[1] < 2:
+            st.error(f"❌ File terdeteksi hanya memiliki {df.shape[1]} kolom. Pastikan pemisah CSV benar.")
+            return None
+
+        # 4. Cari kolom Tahun (biasanya kolom pertama)
+        # Cari kolom Total Generation (Kita cari kolom yang mengandung kata 'Total' dan 'Generation')
+        col_tahun = df.columns[0]
+        col_target = None
+        
+        # Mencari kolom yang kemungkinan besar adalah 'Total Generation'
+        potential_cols = [c for c in df.columns if 'Total' in c and 'Generation' in c]
+        if potential_cols:
+            col_target = potential_cols[0]
+        elif df.shape[1] >= 9: # Jika tidak ketemu namanya, ambil index ke-8 (kolom ke-9)
+            col_target = df.columns[8]
+        else:
+            col_target = df.columns[-1] # Ambil kolom terakhir sebagai cadangan
+
+        df_clean = df[[col_tahun, col_target]].copy()
         df_clean.columns = ['Year', 'Total_Generation']
         
-        # Konversi ke numerik
+        # 5. Konversi ke numerik
         df_clean['Year'] = pd.to_numeric(df_clean['Year'], errors='coerce')
         df_clean['Total_Generation'] = pd.to_numeric(df_clean['Total_Generation'], errors='coerce')
         
-        # Hapus baris yang tidak valid
+        # 6. Hapus baris yang tidak valid
         df_clean = df_clean.dropna()
         df_clean = df_clean[df_clean['Year'] > 1900].sort_values('Year')
         df_clean['Year'] = df_clean['Year'].astype(int)
