@@ -19,33 +19,51 @@ Dashboard ini membandingkan berbagai model Machine Learning untuk memproyeksikan
 # --- FUNGSI LOAD & CLEAN DATA ---
 @st.cache_data
 def load_data():
-    # Mencari file CSV di direktori
     files = [f for f in os.listdir('.') if f.endswith('.csv')]
     if not files:
-        st.error("❌ File CSV tidak ditemukan! Pastikan dataset ada di repositori GitHub Anda.")
+        st.error("❌ File CSV tidak ditemukan!")
         return None
     
     target_file = files[0]
     
     try:
-        # Gunakan encoding ISO-8859-1 untuk menghindari UnicodeDecodeError
-        df = pd.read_csv(target_file, skiprows=3, encoding='ISO-8859-1')
+        # Gunakan sep=None dan engine='python' agar pandas mendeteksi pemisah secara otomatis
+        # on_bad_lines='skip' akan melewati baris yang jumlah kolomnya tidak konsisten
+        df = pd.read_csv(
+            target_file, 
+            skiprows=3, 
+            encoding='ISO-8859-1', 
+            sep=None, 
+            engine='python', 
+            on_bad_lines='skip'
+        )
         
-        # Seleksi kolom: Tahun (index 0) dan Total Generation (index 8)
+        # Membersihkan nama kolom dari spasi tambahan
+        df.columns = [str(c).strip() for c in df.columns]
+        
+        # Berdasarkan file EPA: Kolom pertama biasanya Tahun, 
+        # dan kolom 'Total' (generasi) biasanya berada di indeks ke-8
+        # Kita coba ambil berdasarkan posisi indeks untuk menghindari error nama kolom
         df_clean = df.iloc[:, [0, 8]].copy()
         df_clean.columns = ['Year', 'Total_Generation']
         
-        # Konversi ke numerik dan hapus baris kosong
+        # Konversi data ke numerik
         df_clean['Year'] = pd.to_numeric(df_clean['Year'], errors='coerce')
         df_clean['Total_Generation'] = pd.to_numeric(df_clean['Total_Generation'], errors='coerce')
+        
+        # Hapus baris yang memiliki NaN setelah konversi
         df_clean = df_clean.dropna().sort_values('Year')
         
         # Pastikan tipe data tahun adalah integer
         df_clean['Year'] = df_clean['Year'].astype(int)
         
+        # Filter data agar masuk akal (Tahun > 1900)
+        df_clean = df_clean[df_clean['Year'] > 1900]
+        
         return df_clean
+
     except Exception as e:
-        st.error(f"❌ Gagal membaca data: {e}")
+        st.error(f"❌ Gagal memproses data: {e}")
         return None
 
 # Load dataset
